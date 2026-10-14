@@ -1,33 +1,38 @@
-### 构建阶段 ----------
-FROM node:18-bookworm-slim AS builder
-WORKDIR /app
-
-###安装原生模块编译工具作为兜底（sqlite3 等若缺少预编译包可在此编译）
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
-
-###先装依赖，利用 Docker 层缓存
+# syntax=docker/dockerfile:1
+# CloudflareMailServer (Express + SQLite + IMAP/Resend) 多架构镜像
+# 构建阶段：安装依赖（sqlite3 为原生模块，需编译工具兜底）
+FROM node:20-bookworm-slim AS builder
+WORKDIR /build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY package.json ./
-RUN npm install
-
-###再复制源码（构建上下文已通过 .dockerignore 排除 node_modules/data/logs/config.yaml）
+RUN npm install --omit=dev --no-audit --no-fund \
+ && npm cache clean --force
 COPY . .
+# 配置文件和运行数据不进镜像
+RUN rm -rf config.yaml data logs .git .github test
 
-###---------- 运行阶段 ----------
-FROM node:18-bookworm-slim AS runtime
+# 运行阶段
+FROM node:20-bookworm-slim
+ARG APP_VERSION=dev
+ENV NODE_ENV=production \
+    TZ=Asia/Shanghai \
+    APP_DIR=/app \
+    APP_SRC=/opt/cloudflare-mail-server \
+    AUTO_UPDATE=true
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tini tzdata ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+# 镜像内保存一份“干净”的程序，启动时同步到挂载目录 /app
+COPY --from=builder /build ${APP_SRC}
+RUN echo "${APP_VERSION}" > ${APP_SRC}/.image-version
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && mkdir -p ${APP_DIR}
 WORKDIR /app
-ENV NODE_ENV=production TZ=Asia/Shanghai
-
-###从构建阶段复制已装好依赖的完整应用
-COPY --from=builder /app /app
-
-###兜底：若宿主机未提供 config.yaml，则使用 sample 生成一份（含默认 admin/admin123，需尽快修改）
-RUN cp -n config.yaml.sample config.yaml 2>/dev/null || true && mkdir -p /app/data /app/logs
-
-###端口以 config.yaml 中 server.port 为准（sample 默认 3116，README 的 3001 已过时）
+VOLUME ["/app"]
 EXPOSE 3116
-
-###以 root 运行，保证绑定挂载的宿主机目录（data/logs/config）可写。
-###如需加固：自行创建非 root 用户并 chown 你的挂载目录，再去掉下面这行。
-USER root
-
+# 程序只处理 SIGINT 做优雅退出
+STOPSIGNAL SIGINT
+ENTRYPOINT ["/usr/bin/tini", "--", "docker-entrypoint.sh"]
 CMD ["node", "server.js"]
