@@ -1,68 +1,22 @@
-# syntax=docker/dockerfile:1
-# Node 22 is supported by the upstream project (engines >=18); Bookworm slim is Debian-based.
-FROM node:22-bookworm-slim AS build
+# docker-compose.yml —— 便捷启动方式（等价于下面的 docker run 命令）
+# 用法：
+#   1) 在本目录先准备好 config.yaml（cp config.yaml.sample config.yaml 并填写）
+#   2) 把整个项目目录作为当前目录，执行：docker compose up -d
+#
+# 说明：
+#   - ./ 挂载到容器 /app：源码、config.yaml、data/、logs/ 全部在宿主机
+#   - node_modules 用命名卷保留镜像内预编译好的依赖（不会被宿主机挂载覆盖）
 
-WORKDIR /opt/cloudflare-mail-server
+services:
+  cloudflare-mail-server:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/cloudflare-mail-server:latest
+    container_name: cloudflare-mail-server
+    ports:
+      - "3116:3116"
+    volumes:
+      - ./:/app
+      - node_modules:/app/node_modules
+    restart: unless-stopped
 
-# sqlite3 may need node-gyp on architectures without a matching prebuilt binary.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      python3 \
-      make \
-      g++ \
-      pkg-config \
-      libsqlite3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY . .
-
-# Defense in depth: remove any literal Cloudflare API-token defaults from the
-# runtime copy of utils/config.js. This does not clean Git history; rotate exposed tokens.
-RUN python3 - <<'PY'
-from pathlib import Path
-import re
-
-path = Path("utils/config.js")
-if not path.is_file():
-    raise SystemExit("Expected utils/config.js in the project build context")
-source = path.read_text(encoding="utf-8")
-source, count = re.subn(
-    r"(\bapiToken\s*:\s*)(?:'[^']*'|\"[^\"]*\"|`[^`]*`)",
-    r"\1''",
-    source,
-)
-path.write_text(source, encoding="utf-8")
-print(f"Removed {count} apiToken default value(s) from the image source copy.")
-PY
-
-# Upstream does not track package-lock.json, so install from package.json.
-# Keep dependencies outside /app, which is bind-mounted at runtime.
-RUN npm install --omit=dev --no-audit --no-fund \
-    && mv node_modules /opt/node_modules
-
-FROM node:22-bookworm-slim AS runtime
-
-ENV NODE_ENV=production \
-    PORT=3116 \
-    NODE_PATH=/opt/node_modules
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      libsqlite3-0 \
-      libstdc++6 \
-    && rm -rf /var/lib/apt/lists/* \
-    && install -d -o node -g node /app
-
-COPY --from=build --chown=node:node /opt/cloudflare-mail-server /opt/cloudflare-mail-server
-COPY --from=build --chown=node:node /opt/node_modules /opt/node_modules
-COPY --chown=node:node docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-
-RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
-
-WORKDIR /app
-VOLUME ["/app"]
-EXPOSE 3116
-USER node
-
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["node", "server.js"]
+volumes:
+  node_modules:
