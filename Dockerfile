@@ -1,4 +1,3 @@
-syntax=docker/dockerfile:1
 ============================================================
 cloudflare-mail-server — Multi-arch Docker image
 支持 linux/amd64 与 linux/arm64（如树莓派、Apple Silicon、ARM 服务器）
