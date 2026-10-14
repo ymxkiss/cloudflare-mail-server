@@ -1,0 +1,22 @@
+.git
+.github
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime state and secrets must never be baked into the image.
+config.yaml
+.env
+.env.*
+data
+logs
+*.sqlite
+*.sqlite-*
+*.db
+
+# Local editor/OS noise.
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
