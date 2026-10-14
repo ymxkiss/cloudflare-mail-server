@@ -1,4 +1,6 @@
-cloudflare-mail-server Docker 化部署
+项目原始地址 https://github.com/chawuciren/cloudflare-mail-server
+
+本仓库仅为cloudflare-mail-server 的Docker化部署
 项目分析
 技术栈：Node.js ≥18 + Express + EJS + SQLite（sqlite3 原生模块），v2.0.2；不是 Workers 项目，是普通 Node 服务。
 收信：Cloudflare Email Routing 把 *@你的域名 转发到一个真实邮箱（如 Gmail），程序用 IMAP 定时拉取（默认 10 分钟），按收件人分发到各账号。
