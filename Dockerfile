@@ -1,47 +1,68 @@
 # syntax=docker/dockerfile:1
+# Node 22 is supported by the upstream project (engines >=18); Bookworm slim is Debian-based.
+FROM node:22-bookworm-slim AS build
 
-# ============================================================
-# cloudflare-mail-server — Multi-arch Docker image
-# 支持 linux/amd64 与 linux/arm64（如树莓派、Apple Silicon、ARM 服务器）
-# 设计：把"整个项目目录"通过绑定挂载(bind mount)挂到容器的 /app，
-#       配置(config.yaml)、数据库(data/)、日志(logs/) 全部落在宿主机，
-#       仅 node_modules 用命名卷保留镜像内预编译好的版本。
-# ============================================================
+WORKDIR /opt/cloudflare-mail-server
 
-# ---------- 构建阶段 ----------
-FROM node:18-bookworm-slim AS builder
-WORKDIR /app
-
-# 安装原生模块编译工具作为兜底（sqlite3 等若缺少预编译包可在此编译）
+# sqlite3 may need node-gyp on architectures without a matching prebuilt binary.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 make g++ \
+      ca-certificates \
+      python3 \
+      make \
+      g++ \
+      pkg-config \
+      libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 先装依赖，利用 Docker 层缓存
-COPY package.json ./
-RUN npm install
-
-# 再复制源码（构建上下文已通过 .dockerignore 排除 node_modules/data/logs/config.yaml）
 COPY . .
 
-# ---------- 运行阶段 ----------
-FROM node:18-bookworm-slim AS runtime
-WORKDIR /app
+# Defense in depth: remove any literal Cloudflare API-token defaults from the
+# runtime copy of utils/config.js. This does not clean Git history; rotate exposed tokens.
+RUN python3 - <<'PY'
+from pathlib import Path
+import re
+
+path = Path("utils/config.js")
+if not path.is_file():
+    raise SystemExit("Expected utils/config.js in the project build context")
+source = path.read_text(encoding="utf-8")
+source, count = re.subn(
+    r"(\bapiToken\s*:\s*)(?:'[^']*'|\"[^\"]*\"|`[^`]*`)",
+    r"\1''",
+    source,
+)
+path.write_text(source, encoding="utf-8")
+print(f"Removed {count} apiToken default value(s) from the image source copy.")
+PY
+
+# Upstream does not track package-lock.json, so install from package.json.
+# Keep dependencies outside /app, which is bind-mounted at runtime.
+RUN npm install --omit=dev --no-audit --no-fund \
+    && mv node_modules /opt/node_modules
+
+FROM node:22-bookworm-slim AS runtime
+
 ENV NODE_ENV=production \
-    TZ=Asia/Shanghai
+    PORT=3116 \
+    NODE_PATH=/opt/node_modules
 
-# 从构建阶段复制已装好依赖的完整应用
-COPY --from=builder /app /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libsqlite3-0 \
+      libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -o node -g node /app
 
-# 兜底：若宿主机未提供 config.yaml，则使用 sample 生成一份（含默认 admin/admin123，需尽快修改）
-RUN cp -n config.yaml.sample config.yaml 2>/dev/null || true \
-    && mkdir -p /app/data /app/logs
+COPY --from=build --chown=node:node /opt/cloudflare-mail-server /opt/cloudflare-mail-server
+COPY --from=build --chown=node:node /opt/node_modules /opt/node_modules
+COPY --chown=node:node docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# 端口以 config.yaml 中 server.port 为准（sample 默认 3116，README 的 3001 已过时）
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
+
+WORKDIR /app
+VOLUME ["/app"]
 EXPOSE 3116
+USER node
 
-# 以 root 运行，保证绑定挂载的宿主机目录（data/logs/config）可写。
-# 如需加固：自行创建非 root 用户并 chown 你的挂载目录，再去掉下面这行。
-USER root
-
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]
