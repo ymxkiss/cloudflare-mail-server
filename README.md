@@ -24,3 +24,6 @@ docker run -d \
 # 首次启动后编辑配置，再重启
 vi /opt/cloudflare-mail-server/config.yaml
 docker restart cloudflare-mail-server
+
+
+浏览器访问服务器 IP 的 3116 端口，生产环境建议前面套 Nginx/Caddy 上 HTTPS。
