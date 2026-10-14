@@ -31,7 +31,7 @@ RUN cp -n config.yaml.sample config.yaml 2>/dev/null || true
 EXPOSE 3116
 
 ### 以 root 运行，保证绑定挂载的宿主机目录（data/logs/config）可写。
-### 如需加固：自行创建非 root 用户并 chown 你的挂载目录，再去掉下面这行。
+###  如需加固：自行创建非 root 用户并 chown 你的挂载目录，再去掉下面这行。
 USER root
 
 CMD ["node", "server.js"]
